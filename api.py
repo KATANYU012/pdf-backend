@@ -1,18 +1,26 @@
 from flask import Flask, request, send_file
 from flask_cors import CORS
-from pdf2docx import Converter
+import convertapi
 import os
 import uuid
 
 app = Flask(__name__)
-CORS(app) # อนุญาตให้ HTML เรียกใช้งานได้
+CORS(app)  # อนุญาตให้หน้าเว็บเรียกใช้งานได้
 
-UPLOAD_FOLDER = 'uploads'
+# ==========================================
+# 🔴 สำคัญมาก: ใส่รหัส SECRET ของคุณตรงนี้
+# สมัครฟรีที่ https://www.convertapi.com/
+convertapi.api_secret = 'ใส่รหัส_Secret_ของคุณ_ตรงนี้'
+# ==========================================
+
+# ใช้ /tmp เพราะ Render เป็น Linux (และไฟล์จะถูกลบเองเมื่อรีสตาร์ท)
+UPLOAD_FOLDER = '/tmp'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
 @app.route('/convert', methods=['POST'])
 def convert_pdf():
+    # 1. ตรวจสอบว่ามีการส่งไฟล์มาไหม
     if 'file' not in request.files:
         return "No file uploaded", 400
     
@@ -20,31 +28,55 @@ def convert_pdf():
     if file.filename == '':
         return "No selected file", 400
 
-    # 1. บันทึกไฟล์ PDF ชั่วคราว
+    # 2. ตั้งชื่อไฟล์แบบสุ่ม (ป้องกันชื่อซ้ำ)
     filename = str(uuid.uuid4())
     pdf_path = os.path.join(UPLOAD_FOLDER, f"{filename}.pdf")
     docx_path = os.path.join(UPLOAD_FOLDER, f"{filename}.docx")
     
-    file.save(pdf_path)
-
     try:
-        # 2. แปลง PDF เป็น DOCX (หัวใจสำคัญตรงนี้)
-        cv = Converter(pdf_path)
-        cv.convert(docx_path, start=0, end=None)
-        cv.close()
+        # 3. บันทึกไฟล์ PDF ลงเครื่อง Server ชั่วคราว
+        print(f"Receiving file: {file.filename}")
+        file.save(pdf_path)
 
-        # 3. ส่งไฟล์ Word กลับไปให้หน้าเว็บ
-        return send_file(docx_path, as_attachment=True, download_name=f"{file.filename.split('.')[0]}.docx")
+        # 4. ส่งไปแปลงที่ ConvertAPI (ความลับความคมชัดอยู่ตรงนี้!)
+        print("Uploading to ConvertAPI...")
+        # พารามิเตอร์เพิ่มเติม: from_format='pdf' เพื่อความชัวร์
+        result = convertapi.convert('docx', { 'File': pdf_path }, from_format='pdf')
+        
+        # 5. บันทึกไฟล์ที่แปลงเสร็จแล้วกลับลงเครื่อง
+        print("Saving converted file...")
+        result.save_files(docx_path)
+
+        # 6. ส่งไฟล์ Word กลับไปให้หน้าเว็บ
+        print("Sending file back to client...")
+        return send_file(
+            docx_path, 
+            as_attachment=True, 
+            download_name=f"{file.filename.replace('.pdf', '')}.docx",
+            mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        )
+
+    except convertapi.api.exception.ApiError as e:
+        # กรณีโควตาหมด หรือ Key ผิด
+        print(f"ConvertAPI Error: {str(e)}")
+        return f"ConvertAPI Error: {str(e)}", 500
 
     except Exception as e:
-        return str(e), 500
+        # กรณี Error อื่นๆ
+        print(f"Server Error: {str(e)}")
+        return f"Internal Server Error: {str(e)}", 500
     
     finally:
-        # 4. ลบไฟล์ขยะทิ้ง (Clean up)
-        if os.path.exists(pdf_path): os.remove(pdf_path)
-        # หมายเหตุ: docx_path จะถูกลบหลังจากส่งไฟล์เสร็จ หรือตั้ง Job ลบทีหลัง (ในโค้ดนี้เก็บไว้ก่อนเผื่อส่งพลาด)
+        # 7. ลบไฟล์ขยะทิ้งเพื่อคืนพื้นที่ (Clean up)
+        try:
+            if os.path.exists(pdf_path): os.remove(pdf_path)
+            if os.path.exists(docx_path): os.remove(docx_path)
+            print("Cleanup completed.")
+        except Exception as e:
+            print(f"Cleanup Error: {str(e)}")
 
+# รัน Server
 if __name__ == '__main__':
-    print("Server is running on http://localhost:5000")
-    print("พร้อมแปลงไฟล์แล้วครับ...")
-    app.run(port=5000, debug=True)
+    # พอร์ต 5000 สำหรับ Localhost, Render จะใช้พอร์ตของเขาเอง
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
