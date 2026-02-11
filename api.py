@@ -75,3 +75,43 @@ if __name__ == '__main__':
     # พอร์ต 5000 สำหรับ Localhost, Render จะใช้พอร์ตของเขาเอง
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
+# ==========================================
+# 🔴 ระบบ AI QR Code (Replicate)
+# ==========================================
+import replicate
+
+# เอา API Token ที่ก๊อปมาจากเว็บ Replicate (ที่ขึ้นต้นด้วย r8_) มาใส่ในเครื่องหมายคำพูดด้านล่างครับ
+os.environ["REPLICATE_API_TOKEN"] = "r8_NUTr4UIgJeYrJKidBTKP8eD2L4MzSdi1P7ErK"
+
+@app.route('/generate-ai-qr', methods=['POST'])
+def generate_ai_qr():
+    data = request.get_json()
+    content = data.get('content')
+    prompt = data.get('prompt')
+    
+    if not content or not prompt:
+        return {"error": "กรุณาส่งลิงก์และ Prompt มาด้วยครับ"}, 400
+        
+    try:
+        print(f"Calling Replicate AI with prompt: {prompt}")
+        
+        # เราใช้ Model ยอดฮิตสำหรับทำ QR Code: nateraw/qrcode-stable-diffusion
+        output = replicate.run(
+            "nateraw/qrcode-stable-diffusion:9cdabf8f8a991351960c7ce2105de2909514b40bd27ac202dba57935b07d29d4",
+            input={
+                "prompt": prompt + ", masterpiece, ultra detailed, 8k resolution", # แอบเติมคำสั่งให้ภาพสวยขึ้น
+                "qr_code_content": content,
+                "negative_prompt": "ugly, disfigured, low quality, blurry, nsfw", # ห้าม AI วาดภาพเละๆ
+                "controlnet_conditioning_scale": 1.5, # ยิ่งเยอะ ลาย QR ยิ่งชัด (สแกนง่าย)
+            }
+        )
+        
+        # Replicate มักจะคืนค่ามาเป็น List (Array) ของ URL รูปภาพ
+        image_url = output[0] if isinstance(output, list) else output
+        
+        print(f"AI Success! Image URL: {image_url}")
+        return {"success": True, "image_url": image_url}
+        
+    except Exception as e:
+        print(f"Replicate Error: {str(e)}")
+        return {"error": str(e)}, 500
