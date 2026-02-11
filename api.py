@@ -3,72 +3,85 @@ from flask_cors import CORS
 import convertapi
 import os
 import uuid
+import replicate # ต้องมีอันนี้
 
 app = Flask(__name__)
-CORS(app)  # อนุญาตให้หน้าเว็บเรียกใช้งานได้
+CORS(app)
 
 # ==========================================
-# 🔴 ระบบแปลง PDF เป็น Word (ConvertAPI)
+# 1. ตั้งค่า API Keys
 # ==========================================
 convertapi.api_credentials = 'YUEZgVh6C5WpwE65S1oNN1yBnuVZV8Jt'
+os.environ["REPLICATE_API_TOKEN"] = "r8_NUTr4UIgJeYrJKidBTKP8eD2L4MzSdi1P7ErK" # <--- เปลี่ยนตรงนี้!
 
-# ใช้ /tmp เพราะ Render เป็น Linux (และไฟล์จะถูกลบเองเมื่อรีสตาร์ท)
 UPLOAD_FOLDER = '/tmp'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
+# ==========================================
+# 2. ระบบ PDF to Word
+# ==========================================
 @app.route('/convert', methods=['POST'])
 def convert_pdf():
-    # 1. ตรวจสอบว่ามีการส่งไฟล์มาไหม
-    if 'file' not in request.files:
-        return "No file uploaded", 400
-    
+    if 'file' not in request.files: return "No file uploaded", 400
     file = request.files['file']
-    if file.filename == '':
-        return "No selected file", 400
+    if file.filename == '': return "No selected file", 400
 
-    # 2. ตั้งชื่อไฟล์แบบสุ่ม (ป้องกันชื่อซ้ำ)
     filename = str(uuid.uuid4())
     pdf_path = os.path.join(UPLOAD_FOLDER, f"{filename}.pdf")
     docx_path = os.path.join(UPLOAD_FOLDER, f"{filename}.docx")
     
     try:
-        # 3. บันทึกไฟล์ PDF ลงเครื่อง Server ชั่วคราว
-        print(f"Receiving file: {file.filename}")
         file.save(pdf_path)
-
-        # 4. ส่งไปแปลงที่ ConvertAPI
-        print("Uploading to ConvertAPI...")
         result = convertapi.convert('docx', { 'File': pdf_path }, from_format='pdf')
-        
-        # 5. บันทึกไฟล์ที่แปลงเสร็จแล้วกลับลงเครื่อง
-        print("Saving converted file...")
         result.save_files(docx_path)
-
-        # 6. ส่งไฟล์ Word กลับไปให้หน้าเว็บ
-        print("Sending file back to client...")
         return send_file(
-            docx_path, 
-            as_attachment=True, 
+            docx_path, as_attachment=True, 
             download_name=f"{file.filename.replace('.pdf', '')}.docx",
             mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
         )
-
     except Exception as e:
-        print(f"Server Error: {str(e)}")
         return f"Server Error: {str(e)}", 500
-    
     finally:
-        # 7. ลบไฟล์ขยะทิ้งเพื่อคืนพื้นที่ (Clean up)
         try:
             if os.path.exists(pdf_path): os.remove(pdf_path)
             if os.path.exists(docx_path): os.remove(docx_path)
-            print("Cleanup completed.")
-        except Exception as e:
-            print(f"Cleanup Error: {str(e)}")
+        except: pass
 
-# รัน Server
+# ==========================================
+# 3. ระบบ AI QR Code (Replicate)
+# ==========================================
+@app.route('/generate-ai-qr', methods=['POST'])
+def generate_ai_qr():
+    data = request.get_json()
+    content = data.get('content')
+    prompt = data.get('prompt')
+    
+    if not content or not prompt:
+        return {"error": "Missing content or prompt"}, 400
+        
+    try:
+        # สั่งให้ AI ทำงาน
+        output = replicate.run(
+            "nateraw/qrcode-stable-diffusion:9cdabf8f8a991351960c7ce2105de2909514b40bd27ac202dba57935b07d29d4",
+            input={
+                "prompt": prompt + ", masterpiece, high quality, highly detailed",
+                "qr_code_content": content,
+                "negative_prompt": "ugly, disfigured, low quality, blurry",
+                "controlnet_conditioning_scale": 1.5,
+            }
+        )
+        # ดึง URL รูปภาพส่งกลับไปให้หน้าเว็บ
+        image_url = output[0] if isinstance(output, list) else output
+        return {"success": True, "image_url": image_url}
+        
+    except Exception as e:
+        print(f"Replicate Error: {str(e)}")
+        # จัดการข้อความ Error ให้หน้าเว็บอ่านง่ายๆ
+        if "402" in str(e) or "Insufficient credit" in str(e):
+            return {"error": "เครดิต AI หมด กรุณาเปลี่ยน API Key ใหม่"}, 402
+        return {"error": str(e)}, 500
+
 if __name__ == '__main__':
-    # พอร์ต 5000 สำหรับ Localhost, Render จะใช้พอร์ตของเขาเอง
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
