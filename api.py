@@ -12,7 +12,7 @@ CORS(app)
 # 1. ตั้งค่า API Keys
 # ==========================================
 convertapi.api_credentials = 'YUEZgVh6C5WpwE65S1oNN1yBnuVZV8Jt'
-os.environ["REPLICATE_API_TOKEN"] = "r8_NUTr4UIgJeYrJKidBTKP8eD2L4MzSdi1P7ErK" # <--- เปลี่ยนตรงนี้!
+os.environ["REPLICATE_API_TOKEN"] = "r8_88IJoXQjPAYeXIuturzPm1XrZ4JDPvC2VUlCO" # <--- เปลี่ยนตรงนี้!
 
 UPLOAD_FOLDER = '/tmp'
 if not os.path.exists(UPLOAD_FOLDER):
